@@ -16,6 +16,7 @@ pub mod mcp;
 mod normalize;
 pub mod policy;
 mod secrets;
+pub mod vault;
 mod verdict;
 
 use std::collections::HashMap;
