@@ -134,6 +134,12 @@ enum PolicyCmd {
     Validate { file: std::path::PathBuf },
     /// Print a starter policy.
     Init,
+    /// Hash a term for `detectors.never_leave` (the policy stores only the hash).
+    HashTerm {
+        #[arg(long)]
+        salt: String,
+        term: String,
+    },
 }
 
 const STARTER_POLICY: &str = r#"# MCP-Guard policy. Docs: https://mcpguard.online/docs/policies
@@ -263,6 +269,10 @@ fn policy(cmd: PolicyCmd) -> Result<ExitCode> {
     match cmd {
         PolicyCmd::Init => {
             print!("{STARTER_POLICY}");
+            Ok(ExitCode::SUCCESS)
+        }
+        PolicyCmd::HashTerm { salt, term } => {
+            println!("{}", mcpguard_engine::policy::detect::hash_term(&salt, &term));
             Ok(ExitCode::SUCCESS)
         }
         PolicyCmd::Validate { file } => {

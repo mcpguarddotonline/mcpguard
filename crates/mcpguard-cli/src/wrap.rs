@@ -155,6 +155,13 @@ fn from_server(sh: &Shared, v: &mut Value) {
         _ => None,
     };
     sh.mask.mask_json(v);
+    if method.as_deref() == Some("tools/call") && !sh.policy.detectors.is_empty() {
+        if let Some(result) = v.get_mut("result") {
+            walk(result, &mut |s| {
+                sh.policy.detectors.apply(s, false);
+            });
+        }
+    }
     let r = mcp::inspect_from_server(v, method.as_deref(), &sh.name);
     if !r.findings.is_empty() {
         eprintln!(
@@ -217,8 +224,12 @@ fn from_client(sh: &Arc<Shared>, v: &mut Value, out: &Out, child: &Out) {
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_owned();
+        let mut det = Vec::new();
+        if let Some(a) = v.pointer_mut("/params/arguments") {
+            walk(a, &mut |s| det.extend(sh.policy.detectors.apply(s, true)));
+        }
         let args = v.pointer("/params/arguments").cloned().unwrap_or_else(|| json!({}));
-        let d = policy::evaluate(
+        let mut d = policy::evaluate(
             &sh.policy,
             &policy::Call {
                 server: &sh.name,
@@ -227,6 +238,15 @@ fn from_client(sh: &Arc<Shared>, v: &mut Value, out: &Out, child: &Out) {
                 arguments: &args,
             },
         );
+        for h in det.iter().filter(|h| h.action != Verdict::Allow) {
+            d.verdict = d.verdict.max(h.action);
+            d.reasons.push(policy::Reason {
+                code: h.detector.clone(),
+                detail: format!("matched detector {}", h.detector),
+                path: None,
+                severity: None,
+            });
+        }
         if let Some(limit) = lock(&sh.budget).charge(
             &sh.policy.limits,
             d.risk == policy::Risk::Destructive,
@@ -272,6 +292,15 @@ fn from_client(sh: &Arc<Shared>, v: &mut Value, out: &Out, child: &Out) {
         }
     }
     send(child, v);
+}
+
+fn walk(v: &mut Value, f: &mut impl FnMut(&mut String)) {
+    match v {
+        Value::String(s) => f(s),
+        Value::Array(a) => a.iter_mut().for_each(|x| walk(x, f)),
+        Value::Object(m) => m.values_mut().for_each(|x| walk(x, f)),
+        _ => {}
+    }
 }
 
 fn ask(sh: &Shared, out: &Out, child: &Out, msg: Value, id: Value, tool: &str, why: &str) {
