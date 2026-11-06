@@ -227,7 +227,7 @@ impl Policy {
         if text.trim().is_empty() {
             return Ok(Policy::default());
         }
-        let p: Policy = serde_yaml::from_str(text).map_err(|e| e.to_string())?;
+        let p: Policy = serde_norway::from_str(text).map_err(|e| e.to_string())?;
         if p.version != 1 {
             return Err(format!("unsupported policy version {}", p.version));
         }
