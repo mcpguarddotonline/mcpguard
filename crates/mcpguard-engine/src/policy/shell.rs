@@ -23,11 +23,7 @@ static DEVICE_WRITE: LazyLock<Regex> =
 
 /// Splits a command line into simple commands on `;`, `&&`, `||`, `|`.
 fn simple_commands(cmd: &str) -> Vec<Vec<String>> {
-    let normalized = cmd
-        .replace("&&", ";")
-        .replace("||", ";")
-        .replace(['|', '
-'], ";");
+    let normalized = cmd.replace("&&", ";").replace("||", ";").replace(['|', '\n'], ";");
     normalized
         .split(';')
         .filter_map(|part| {
