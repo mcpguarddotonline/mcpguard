@@ -12,6 +12,7 @@
 //! paths: { allow: ["/home/me/projects/**"], deny: ["**/.env"] }
 //! recipients: { allow_domains: [example.com] }
 //! limits: { calls_per_minute: 60, destructive_per_session: 20 }
+//! approvals: { in_client: true, timeout_seconds: 300 }
 //! rules:
 //!   - name: prod-db-is-read-only
 //!     match: { server: prod-postgres }
@@ -122,6 +123,36 @@ pub struct Recipients {
     pub allow: Vec<String>,
 }
 
+/// How "ask" verdicts are resolved.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Approvals {
+    /// Let the person at the AI client approve in place (MCP elicitation).
+    /// Turn off to require approval from the dashboard or a phone.
+    #[serde(default = "yes")]
+    pub in_client: bool,
+    /// How long a held call waits before it is refused (fail closed).
+    #[serde(default = "default_timeout")]
+    pub timeout_seconds: u32,
+}
+
+impl Default for Approvals {
+    fn default() -> Self {
+        Approvals {
+            in_client: true,
+            timeout_seconds: default_timeout(),
+        }
+    }
+}
+
+fn yes() -> bool {
+    true
+}
+
+fn default_timeout() -> u32 {
+    300
+}
+
 fn v1() -> u32 {
     1
 }
@@ -154,6 +185,8 @@ pub struct Policy {
     #[serde(default)]
     pub limits: Limits,
     #[serde(default)]
+    pub approvals: Approvals,
+    #[serde(default)]
     pub rules: Vec<Rule>,
 }
 
@@ -167,6 +200,7 @@ impl Default for Policy {
             paths: PathScope::default(),
             recipients: Recipients::default(),
             limits: Limits::default(),
+            approvals: Approvals::default(),
             rules: Vec::new(),
         }
     }
@@ -180,6 +214,9 @@ impl Policy {
         let p: Policy = serde_yaml::from_str(text).map_err(|e| e.to_string())?;
         if p.version != 1 {
             return Err(format!("unsupported policy version {}", p.version));
+        }
+        if !(10..=3600).contains(&p.approvals.timeout_seconds) {
+            return Err("approvals.timeout_seconds must be between 10 and 3600".into());
         }
         Ok(p)
     }
