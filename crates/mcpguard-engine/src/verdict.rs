@@ -4,10 +4,11 @@ use serde::Serialize;
 ///
 /// Variants are ordered by severity (`Allow < … < Block`); when several rules
 /// match, the strictest action wins.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum Action {
     /// Pass through unchanged.
+    #[default]
     Allow,
     /// Pass through, but mark the content as untrusted data for the model.
     Annotate,

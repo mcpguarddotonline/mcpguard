@@ -147,3 +147,24 @@ fn verdict_serializes_to_stable_json() {
         "redacted output must not leak into JSON by default"
     );
 }
+
+#[test]
+fn single_zero_width_joiner_and_leading_bom_are_not_flagged() {
+    let v = inspect("\u{FEFF}न\u{200D}म \u{1F469}\u{200D}\u{1F4BB}", Direction::ToClient);
+    assert_eq!(v.action, Action::Allow);
+    assert_eq!(v.output, "न\u{200D}म \u{1F469}\u{200D}\u{1F4BB}");
+}
+
+#[test]
+fn zero_width_runs_still_block() {
+    let v = inspect("a\u{200B}\u{200C}\u{200B}b", Direction::ToClient);
+    assert_eq!(v.action, Action::Block);
+    assert_eq!(v.output, "ab");
+}
+
+#[test]
+fn bidi_controls_are_kept_but_annotated() {
+    let v = inspect("abc\u{202E}fed", Direction::ToClient);
+    assert_eq!(v.action, Action::Annotate);
+    assert!(v.output.contains('\u{202E}'));
+}

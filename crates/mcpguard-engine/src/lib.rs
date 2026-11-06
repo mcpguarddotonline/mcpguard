@@ -12,6 +12,7 @@
 //! ```
 
 mod injection;
+pub mod mcp;
 mod normalize;
 mod secrets;
 mod verdict;
