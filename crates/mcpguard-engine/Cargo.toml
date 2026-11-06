@@ -1,0 +1,19 @@
+[package]
+name = "mcpguard-engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "MCP-Guard detection engine: prompt-injection, secret and destructive-action checks for MCP traffic"
+homepage.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+regex = "1.13.1"
+serde = { version = "1.0.229", features = ["derive"] }
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+serde_json = "1.0.154"
