@@ -49,8 +49,14 @@ static RULES: LazyLock<Vec<InjectionRule>> = LazyLock::new(|| {
         rule(
             "injection.tool_coercion",
             Action::Annotate,
-            "instructs the agent to call tools or send credentials",
-            r#"(?i)\b(?:call|invoke|use|run)\s+the\s+[`"']?[a-z0-9_.-]+[`"']?\s+tool\b|\b(?:send|post|upload|forward|email)\s+(?:the|all|your|any)\s+(?:secrets?|credentials|api\s+keys?|tokens?|passwords?|\.env|ssh\s+keys?)"#,
+            "instructs the agent to call a specific tool",
+            r#"(?i)\b(?:call|invoke|use|run)\s+the\s+[`"']?[a-z0-9_.-]+[`"']?\s+tool\b"#,
+        ),
+        rule(
+            "injection.credential_exfil",
+            Action::Annotate,
+            "asks the agent to send credentials somewhere",
+            r#"(?i)\b(?:send|post|upload|forward|email|paste|share)\s+(?:the|all|your|any|all\s+(?:the|your))\s+(?:secrets?|credentials|api\s+keys?|tokens?|passwords?|\.env|ssh\s+keys?|private\s+keys?)"#,
         ),
         rule(
             "injection.markdown_exfil",
