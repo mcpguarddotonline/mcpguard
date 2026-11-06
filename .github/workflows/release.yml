@@ -1,0 +1,58 @@
+name: Release
+on:
+  push: { tags: ["v*"] }
+permissions:
+  contents: write
+  id-token: write      # keyless signing (Sigstore) and build provenance
+  attestations: write
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - { target: aarch64-apple-darwin, os: macos-latest }
+          - { target: x86_64-apple-darwin, os: macos-latest }
+          - { target: x86_64-unknown-linux-gnu, os: ubuntu-latest }
+          - { target: aarch64-unknown-linux-gnu, os: ubuntu-24.04-arm }
+          - { target: x86_64-pc-windows-msvc, os: windows-latest }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with: { targets: "${{ matrix.target }}" }
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libdbus-1-dev
+      - run: cargo build --release --locked -p mcpguard-cli --target ${{ matrix.target }}
+      - name: Package
+        shell: bash
+        run: |
+          name=mcpguard-${{ github.ref_name }}-${{ matrix.target }}
+          mkdir "$name"
+          cp README.md LICENSE "$name"/
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            cp target/${{ matrix.target }}/release/mcpguard.exe "$name"/
+            7z a "$name.zip" "$name" >/dev/null
+          else
+            cp target/${{ matrix.target }}/release/mcpguard "$name"/
+            tar czf "$name.tar.gz" "$name"
+          fi
+      - uses: actions/attest-build-provenance@v2
+        with: { subject-path: "mcpguard-*.*z*" }
+      - uses: actions/upload-artifact@v4
+        with: { name: "${{ matrix.target }}", path: "mcpguard-*.*z*" }
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { merge-multiple: true }
+      - run: sha256sum mcpguard-* > SHA256SUMS
+      - uses: sigstore/cosign-installer@v3
+      - run: cosign sign-blob --yes --bundle SHA256SUMS.sigstore.json SHA256SUMS
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            mcpguard-*
+            SHA256SUMS
+            SHA256SUMS.sigstore.json
+          generate_release_notes: true

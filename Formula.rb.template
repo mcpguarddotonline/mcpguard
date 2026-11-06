@@ -1,0 +1,23 @@
+# Homebrew formula template (published to the mcpguarddotonline/homebrew-tap repo on release).
+class Mcpguard < Formula
+  desc "Firewall for AI agents' MCP tools"
+  homepage "https://mcpguard.online"
+  version "__VERSION__"
+  license "Apache-2.0"
+  on_macos do
+    on_arm do
+      url "https://github.com/mcpguarddotonline/mcpguard/releases/download/v__VERSION__/mcpguard-v__VERSION__-aarch64-apple-darwin.tar.gz"
+      sha256 "__SHA_ARM__"
+    end
+    on_intel do
+      url "https://github.com/mcpguarddotonline/mcpguard/releases/download/v__VERSION__/mcpguard-v__VERSION__-x86_64-apple-darwin.tar.gz"
+      sha256 "__SHA_X86__"
+    end
+  end
+  def install
+    bin.install "mcpguard"
+  end
+  test do
+    assert_match "mcpguard", shell_output("#{bin}/mcpguard --version")
+  end
+end

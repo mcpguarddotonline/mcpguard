@@ -1,13 +1,23 @@
-//! `mcpguard` — local, open-source MCP firewall.
+//! `mcpguard`: local, open-source MCP firewall.
 //!
-//! Today: `inspect` runs the detection engine on text. Coming next: `scan`
-//! (audit your AI clients' MCP configs), `wrap` (guard a stdio MCP server) and
-//! `install` (route clients through MCP-Guard, with one-command undo).
+//! - `scan`: audit the MCP configs of Claude, Cursor, VS Code, Codex, Windsurf.
+//! - `wrap`: run a stdio MCP server behind the engine, policy and local vault.
+//! - `install` / `uninstall`: wrap every server, move secrets into the vault,
+//!   add the prompt hook; one-command undo.
+//! - `vault`: secrets in the OS keychain.
+//! - `policy`, `inspect`, `hook`: the building blocks.
+
+mod clients;
+mod hook;
+mod install;
+mod scan;
+mod vault;
+mod wrap;
 
 use std::io::{Read, Write};
 use std::process::ExitCode;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use mcpguard_engine::{Action, Direction, inspect_bytes};
 
@@ -43,15 +53,66 @@ enum Cmd {
         #[command(subcommand)]
         cmd: PolicyCmd,
     },
-    /// Audit the MCP configs of Claude, Cursor, VS Code, Codex and Windsurf (coming soon).
-    Scan,
-    /// Run a stdio MCP server behind MCP-Guard (coming soon): `mcpguard wrap -- npx some-server`.
+    /// Audit the MCP configs of Claude Desktop/Code, Cursor, VS Code, Codex and Windsurf.
+    ///
+    /// Exit code 2 when a high-risk issue (e.g. a plaintext token) is found.
+    Scan {
+        /// Also check this project's .mcp.json / .cursor / .vscode configs.
+        #[arg(long)]
+        project: Option<std::path::PathBuf>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Run a stdio MCP server behind MCP-Guard: `mcpguard wrap --env GITHUB_TOKEN=vault:github -- npx server-github`.
     Wrap {
+        /// Server name used in policies and messages.
+        #[arg(long)]
+        name: Option<String>,
+        /// Environment for the server; `NAME=vault:secret` reads the local vault.
+        #[arg(long = "env", value_name = "NAME=vault:SECRET")]
+        env: Vec<String>,
+        /// Policy file (default: ~/.config/mcpguard/policy.yaml, else balanced).
+        #[arg(long)]
+        policy: Option<std::path::PathBuf>,
         #[arg(trailing_var_arg = true, allow_hyphen_values = true, required = true)]
         command: Vec<String>,
     },
-    /// Route your AI clients through MCP-Guard, with backup and undo (coming soon).
-    Install,
+    /// Wrap every stdio server in your clients, move plaintext secrets into the vault, add the prompt hook.
+    Install {
+        #[arg(long)]
+        project: Option<std::path::PathBuf>,
+        /// Show what would change without changing anything.
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Restore the client configs `install` changed.
+    Uninstall,
+    /// Local vault in the OS keychain.
+    Vault {
+        #[command(subcommand)]
+        cmd: VaultCmd,
+    },
+    /// Hooks for AI clients (Claude Code `UserPromptSubmit`: `mcpguard hook prompt`).
+    Hook {
+        #[command(subcommand)]
+        cmd: HookCmd,
+    },
+}
+
+#[derive(Subcommand)]
+enum VaultCmd {
+    /// Store a secret (value read from stdin, or prompted without echo where supported).
+    Add { name: String },
+    /// List secret names (never values).
+    List,
+    /// Remove a secret.
+    Rm { name: String },
+}
+
+#[derive(Subcommand)]
+enum HookCmd {
+    /// Block prompts that contain secrets (reads the hook JSON on stdin; exit 2 = block).
+    Prompt,
 }
 
 #[derive(Subcommand)]
@@ -145,9 +206,50 @@ fn run(cli: Cli) -> Result<ExitCode> {
             }))
         }
         Cmd::Policy { cmd } => policy(cmd),
-        Cmd::Scan => bail!("`scan` is not implemented yet — follow https://mcpguard.online"),
-        Cmd::Wrap { .. } => bail!("`wrap` is not implemented yet — follow https://mcpguard.online"),
-        Cmd::Install => bail!("`install` is not implemented yet — follow https://mcpguard.online"),
+        Cmd::Scan { project, json } => Ok(code(scan::run(project.as_deref(), json)?)),
+        Cmd::Wrap {
+            name,
+            env,
+            policy,
+            command,
+        } => {
+            let policy = match policy {
+                Some(p) => load_policy(&p)?,
+                None => {
+                    let default = vault::config_dir().join("policy.yaml");
+                    if default.is_file() {
+                        load_policy(&default)?
+                    } else {
+                        mcpguard_engine::policy::Policy::default()
+                    }
+                }
+            };
+            let name = name.unwrap_or_else(|| {
+                std::path::Path::new(&command[0])
+                    .file_name()
+                    .and_then(|x| x.to_str())
+                    .unwrap_or("server")
+                    .to_owned()
+            });
+            let env = env.iter().map(|e| wrap::parse_env(e)).collect::<Result<Vec<_>>>()?;
+            let store = vault::Keychain::open();
+            Ok(code(wrap::run(
+                wrap::Options {
+                    name,
+                    env,
+                    policy,
+                    command,
+                },
+                &store,
+            )?))
+        }
+        Cmd::Install { project, dry_run } => {
+            let mut store = vault::Keychain::open();
+            Ok(code(install::install(project.as_deref(), dry_run, &mut store)?))
+        }
+        Cmd::Uninstall => Ok(code(install::uninstall()?)),
+        Cmd::Vault { cmd } => vault_cmd(cmd),
+        Cmd::Hook { cmd: HookCmd::Prompt } => Ok(code(hook::prompt(&vault::Keychain::open())?)),
     }
 }
 
@@ -203,4 +305,35 @@ fn policy(cmd: PolicyCmd) -> Result<ExitCode> {
             }))
         }
     }
+}
+
+fn code(c: i32) -> ExitCode {
+    ExitCode::from(u8::try_from(c).unwrap_or(1))
+}
+
+fn vault_cmd(cmd: VaultCmd) -> Result<ExitCode> {
+    use vault::Store;
+    let mut store = vault::Keychain::open();
+    match cmd {
+        VaultCmd::Add { name } => {
+            eprint!("Value for {name} (input is read from stdin; paste and press Enter): ");
+            let mut value = String::new();
+            std::io::stdin().read_line(&mut value)?;
+            let value = value.trim_end_matches(['\r', '\n']);
+            anyhow::ensure!(!value.is_empty(), "empty value");
+            store.set(&name, value)?;
+            eprintln!();
+            println!("Stored {name}. Use it with: mcpguard wrap --env VAR=vault:{name} -- <server>");
+        }
+        VaultCmd::List => {
+            for n in store.names()? {
+                println!("{n}");
+            }
+        }
+        VaultCmd::Rm { name } => {
+            store.remove(&name)?;
+            println!("Removed {name}.");
+        }
+    }
+    Ok(ExitCode::SUCCESS)
 }

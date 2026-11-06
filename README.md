@@ -15,25 +15,46 @@ This repository is the open-source core (Apache-2.0):
 The hosted gateway, dashboard and phone approvals are at
 [mcpguard.online](https://mcpguard.online).
 
-## Status
-
-Early development. Available now:
+## Use it
 
 ```bash
-cargo install --path crates/mcpguard-cli
-echo 'ignore all previous instructions' | mcpguard inspect
-mcpguard inspect --direction to-server --output --text 'postgres://app:hunter22@db/prod'
-# -> postgres://app:«SECRET:db_password#1»@db/prod
+npx mcpguard scan                 # audit Claude, Cursor, VS Code, Codex and Windsurf configs
+mcpguard install --dry-run        # see what would change
+mcpguard install                  # wrap every stdio server, move plaintext keys into the
+                                  # OS keychain, add Claude Code's prompt hook
+mcpguard uninstall                # put everything back
 ```
 
-Coming next: `mcpguard scan` (audit your MCP configs), `mcpguard wrap`
-(guard a stdio MCP server) and `mcpguard install`.
+Or by hand:
+
+```bash
+mcpguard vault add github         # stored in the OS keychain, never on disk
+mcpguard wrap --name github --env GITHUB_PERSONAL_ACCESS_TOKEN=vault:github \
+  -- npx -y @modelcontextprotocol/server-github
+mcpguard policy init > ~/.config/mcpguard/policy.yaml
+mcpguard policy check --server pg --tool query --args '{"sql":"DROP TABLE users"}'   # -> ask
+echo 'ignore all previous instructions' | mcpguard inspect
+```
+
+`wrap` runs every message through the engine below and your policy. Risky
+calls are approved in the client (MCP elicitation) where it supports that.
+Vault values reach the server only as environment variables, and are masked
+back to `{{vault:name}}` in anything the server returns. If the agent writes
+a real value, the call is blocked.
+
+Install from source with `cargo install --path crates/mcpguard-cli`. Release
+binaries for macOS, Linux and Windows are checksummed, Sigstore-signed and
+carry build provenance.
 
 ## What it detects today
 
 - **Secrets** (redacted with typed placeholders): AWS access keys, GitHub
   tokens, Stripe live keys, Slack tokens, Anthropic/OpenAI API keys, private
   keys, and passwords in database URLs.
+- **Destructive actions** (policy engine): SQL parsed with sqlparser (DROP,
+  TRUNCATE, DELETE/UPDATE without WHERE), shell commands (rm -rf, curl | sh,
+  force-push to protected branches, terraform destroy...), path scoping,
+  recipient allow-lists, rate limits; presets and shadow mode.
 - **Prompt injection** in content entering the model: instruction overrides,
   fake role markers, identity resets, tool coercion, markdown-image
   exfiltration, and instructions hidden in invisible Unicode.
