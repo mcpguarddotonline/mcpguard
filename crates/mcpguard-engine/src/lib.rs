@@ -14,6 +14,7 @@
 mod injection;
 pub mod mcp;
 mod normalize;
+pub mod pii;
 pub mod policy;
 mod secrets;
 pub mod vault;

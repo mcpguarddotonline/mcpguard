@@ -22,19 +22,23 @@
 //!     action: allow
 //! ```
 
+pub mod detect;
 pub mod glob;
 pub mod limits;
 pub mod risk;
 pub mod shell;
 pub mod sql;
+pub mod taint;
 
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+pub use detect::Detectors;
 pub use limits::{Budget, Limits};
 pub use risk::Risk;
+pub use taint::Taint;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
@@ -187,7 +191,17 @@ pub struct Policy {
     #[serde(default)]
     pub approvals: Approvals,
     #[serde(default)]
+    pub detectors: Detectors,
+    /// What to do when one session has read private data, taken in untrusted
+    /// content and is about to send data out (the "lethal trifecta").
+    #[serde(default = "default_trifecta")]
+    pub trifecta: Verdict,
+    #[serde(default)]
     pub rules: Vec<Rule>,
+}
+
+fn default_trifecta() -> Verdict {
+    Verdict::Ask
 }
 
 impl Default for Policy {
@@ -201,6 +215,8 @@ impl Default for Policy {
             recipients: Recipients::default(),
             limits: Limits::default(),
             approvals: Approvals::default(),
+            detectors: Detectors::default(),
+            trifecta: Verdict::Ask,
             rules: Vec::new(),
         }
     }
@@ -215,6 +231,7 @@ impl Policy {
         if p.version != 1 {
             return Err(format!("unsupported policy version {}", p.version));
         }
+        p.detectors.validate()?;
         if !(10..=3600).contains(&p.approvals.timeout_seconds) {
             return Err("approvals.timeout_seconds must be between 10 and 3600".into());
         }
