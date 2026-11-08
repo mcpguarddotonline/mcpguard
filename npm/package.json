@@ -1,11 +1,23 @@
 {
-  "name": "mcpguard",
+  "name": "@mcpguarddotonline/mcpguard",
   "version": "0.1.0",
   "description": "Firewall for AI agents' MCP tools: scan configs, block prompt injection, secret leaks and destructive actions.",
   "license": "Apache-2.0",
   "homepage": "https://mcpguard.online",
-  "repository": { "type": "git", "url": "git+https://github.com/mcpguarddotonline/mcpguard.git" },
-  "bin": { "mcpguard": "bin/mcpguard.js" },
-  "files": ["bin/"],
-  "engines": { "node": ">=18" }
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mcpguarddotonline/mcpguard.git"
+  },
+  "bin": {
+    "mcpguard": "bin/mcpguard.js"
+  },
+  "files": [
+    "bin/"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
 }

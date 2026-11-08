@@ -18,7 +18,8 @@ The hosted gateway, dashboard and phone approvals are at
 ## Use it
 
 ```bash
-npx mcpguard scan                 # audit Claude, Cursor, VS Code, Codex and Windsurf configs
+npx @mcpguarddotonline/mcpguard scan   # audit Claude, Cursor, VS Code, Codex and Windsurf configs
+brew install mcpguarddotonline/tap/mcpguard   # or install it (also: npm i -g @mcpguarddotonline/mcpguard)
 mcpguard install --dry-run        # see what would change
 mcpguard install                  # wrap every stdio server (Codex config.toml too), move
                                   # plaintext keys into the OS keychain, add Claude Code's prompt hook

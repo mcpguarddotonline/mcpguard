@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// npx mcpguard <args>: downloads the matching release binary once (verified
+// npx @mcpguarddotonline/mcpguard <args>: downloads the matching release binary once (verified
 // against the release's SHA256SUMS), caches it, and runs it.
 "use strict";
 const { spawnSync } = require("node:child_process");
