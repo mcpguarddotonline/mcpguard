@@ -107,3 +107,45 @@ training set lacks (machine-formatted output), which the next run adds.
 Order of operations, for transparency: the plain fine-tune was scored on the
 held-out sets once before the edit was designed; the edit was designed only
 from dev data and scored on held-out once afterwards.
+
+## Round 2 (November 2026): more public data and a model soup — a regression
+
+Changes (`add_round2.py`, `soup.py`): 5,684 LLMail-Inject phase 2 attack
+emails that round 1 did not use, 2,750 Wikipedia articles in 11 languages as
+benign text, three training runs (seeds 1-3) averaged into one model. Texts
+in dev or dev_ood were excluded from training. The threshold was chosen on
+dev + dev_ood benign at 1% FPR (0.112) and frozen before one held-out run.
+
+On dev data it looked better than round 1:
+
+| Detector | dev_ood false positives | dev_ood recall |
+| --- | ---: | ---: |
+| Round 1 (dev-chosen threshold) | 2.1% | 93.0% |
+| Round 2 single run (seed 1) | 1.9% | 95.4% |
+| Round 2 soup of 3 runs | **1.4%** | **96.4%** |
+
+On the held-out sets it is worse:
+
+| Detector (dev-chosen threshold) | deepset recall | Gandalf recall | InjecAgent recall | InjecAgent FPR |
+| --- | ---: | ---: | ---: | ---: |
+| Round 1 (0.999) | 76.7% | 99.1% | 52.0% | 2.1% |
+| Round 2 soup (0.112) | 88.3% | 100.0% | 50.2% | **12.3%** |
+
+| InjecAgent recall at equal FPR | 1% | 2% | 3.7% |
+| --- | ---: | ---: | ---: |
+| ProtectAI v2 | 6.5% | 7.8% | 8.9% |
+| Round 1 | **34.3%** | **51.0%** | **61.3%** |
+| Round 2 soup | 22.2% | 26.9% | 33.5% |
+
+So round 1 stays our best model. What we take from it:
+
+* **Our dev sets don't predict tool-output performance.** Dev improved on
+  every measure while held-out InjecAgent got clearly worse. The next step is
+  a dev set made of agent tool outputs from a source other than InjecAgent,
+  used only for choosing thresholds and models.
+* More attacks from one source (emails aimed at one email agent) seem to have
+  narrowed what the model treats as an attack in other tool outputs.
+* The held-out sets have now been scored four times (round 1, the
+  weight-space edit, round 2). Every run is reported here, but repeated use
+  wears out a held-out set, so future model choices must be made on dev
+  alone and the held-out sets kept for a final check.
