@@ -20,10 +20,22 @@ The hosted gateway, dashboard and phone approvals are at
 ```bash
 npx mcpguard scan                 # audit Claude, Cursor, VS Code, Codex and Windsurf configs
 mcpguard install --dry-run        # see what would change
-mcpguard install                  # wrap every stdio server, move plaintext keys into the
-                                  # OS keychain, add Claude Code's prompt hook
+mcpguard install                  # wrap every stdio server (Codex config.toml too), move
+                                  # plaintext keys into the OS keychain, add Claude Code's prompt hook
 mcpguard uninstall                # put everything back
 ```
+
+With a hosted workspace at [mcpguard.online](https://mcpguard.online):
+
+```bash
+mcpguard login                    # sign in in your browser; this computer becomes an agent
+mcpguard sync                     # workspace policy down, local decisions up (metadata only)
+mcpguard status
+mcpguard logout                   # revokes this computer's access
+```
+
+`sync` uploads only server and tool names, the action taken and rule ids,
+never prompts, arguments or results. Tokens stay in the OS keychain.
 
 Or by hand:
 
@@ -31,7 +43,7 @@ Or by hand:
 mcpguard vault add github         # stored in the OS keychain, never on disk
 mcpguard wrap --name github --env GITHUB_PERSONAL_ACCESS_TOKEN=vault:github \
   -- npx -y @modelcontextprotocol/server-github
-mcpguard policy init > ~/.config/mcpguard/policy.yaml
+mcpguard policy init > "$(mcpguard status --policy-path)"
 mcpguard policy check --server pg --tool query --args '{"sql":"DROP TABLE users"}'   # -> ask
 echo 'ignore all previous instructions' | mcpguard inspect
 ```

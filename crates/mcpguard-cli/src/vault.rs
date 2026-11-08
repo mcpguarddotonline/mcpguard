@@ -17,7 +17,11 @@ pub trait Store {
     fn names(&self) -> Result<Vec<String>>;
 }
 
+/// `MCPGUARD_CONFIG_DIR` overrides the location (tests, CI, multiple profiles).
 pub fn config_dir() -> PathBuf {
+    if let Some(d) = std::env::var_os("MCPGUARD_CONFIG_DIR").filter(|d| !d.is_empty()) {
+        return PathBuf::from(d);
+    }
     dirs::config_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join("mcpguard")

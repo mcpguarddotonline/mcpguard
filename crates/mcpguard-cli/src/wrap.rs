@@ -164,6 +164,11 @@ fn from_server(sh: &Shared, v: &mut Value) {
     }
     let r = mcp::inspect_from_server(v, method.as_deref(), &sh.name);
     if !r.findings.is_empty() {
+        let rules: Vec<String> = r.findings.iter().map(|f| f.finding.rule_id.to_owned()).collect();
+        let action = format!("{:?}", r.action).to_lowercase();
+        if matches!(action.as_str(), "annotate" | "redact" | "block") {
+            crate::account::spool(&sh.name, None, "from_server", &action, &rules);
+        }
         eprintln!(
             "mcpguard: {} {} ({})",
             format!("{:?}", r.action).to_lowercase(),
@@ -201,6 +206,7 @@ fn from_client(sh: &Arc<Shared>, v: &mut Value, out: &Out, child: &Out) {
     let leaked = sh.mask.mask_json(&mut probe);
     if !leaked.is_empty() {
         eprintln!("mcpguard: blocked: the agent wrote the value of {}", leaked.join(", "));
+        crate::account::spool(&sh.name, None, "from_client", "vault_leak", &[]);
         send(
             out,
             &tool_error(
@@ -215,6 +221,8 @@ fn from_client(sh: &Arc<Shared>, v: &mut Value, out: &Out, child: &Out) {
     }
     let report = mcp::inspect_from_client(v);
     if report.blocked {
+        let rules: Vec<String> = report.findings.iter().map(|f| f.finding.rule_id.to_owned()).collect();
+        crate::account::spool(&sh.name, None, "from_client", "block", &rules);
         send(out, &blocked_response(&id, method.as_deref().unwrap_or(""), &report));
         return;
     }
@@ -252,6 +260,7 @@ fn from_client(sh: &Arc<Shared>, v: &mut Value, out: &Out, child: &Out) {
             d.risk == policy::Risk::Destructive,
             std::time::Instant::now(),
         ) {
+            crate::account::spool(&sh.name, Some(&tool), "from_client", "limit", &[]);
             send(
                 out,
                 &tool_error(
@@ -261,9 +270,11 @@ fn from_client(sh: &Arc<Shared>, v: &mut Value, out: &Out, child: &Out) {
             );
             return;
         }
+        let rule_codes: Vec<String> = d.reasons.iter().map(|r| r.code.clone()).collect();
         match d.verdict {
             Verdict::Allow => {}
             Verdict::Block => {
+                crate::account::spool(&sh.name, Some(&tool), "from_client", "block", &rule_codes);
                 send(
                     out,
                     &tool_error(&id, format!("MCP-Guard policy blocked {tool}: {}.", d.summary())),
@@ -272,6 +283,7 @@ fn from_client(sh: &Arc<Shared>, v: &mut Value, out: &Out, child: &Out) {
             }
             Verdict::Ask => {
                 if !(*lock(&sh.client_elicits) && sh.policy.approvals.in_client) {
+                    crate::account::spool(&sh.name, Some(&tool), "from_client", "ask", &rule_codes);
                     send(
                         out,
                         &tool_error(
@@ -334,6 +346,8 @@ fn ask(sh: &Shared, out: &Out, child: &Out, msg: Value, id: Value, tool: &str, w
         Err(_) => false,
     };
     lock(&sh.elicits).remove(&eid);
+    let outcome = if approved { "approved" } else { "denied" };
+    crate::account::spool(&sh.name, Some(tool), "from_client", outcome, &[]);
     if approved {
         send(child, &msg);
     } else {

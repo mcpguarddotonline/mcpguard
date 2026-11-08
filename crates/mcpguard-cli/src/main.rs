@@ -5,8 +5,10 @@
 //! - `install` / `uninstall`: wrap every server, move secrets into the vault,
 //!   add the prompt hook; one-command undo.
 //! - `vault`: secrets in the OS keychain.
+//! - `login` / `sync`: connect to a hosted workspace (policy down, metadata up).
 //! - `policy`, `inspect`, `hook`: the building blocks.
 
+mod account;
 mod clients;
 mod hook;
 mod install;
@@ -71,7 +73,7 @@ enum Cmd {
         /// Environment for the server; `NAME=vault:secret` reads the local vault.
         #[arg(long = "env", value_name = "NAME=vault:SECRET")]
         env: Vec<String>,
-        /// Policy file (default: ~/.config/mcpguard/policy.yaml, else balanced).
+        /// Policy file (default: policy.yaml in the config folder, see `mcpguard status`; else balanced).
         #[arg(long)]
         policy: Option<std::path::PathBuf>,
         #[arg(trailing_var_arg = true, allow_hyphen_values = true, required = true)]
@@ -96,6 +98,25 @@ enum Cmd {
     Hook {
         #[command(subcommand)]
         cmd: HookCmd,
+    },
+    /// Connect this computer to a hosted MCP-Guard workspace (opens your browser).
+    Login {
+        /// Gateway to sign in to.
+        #[arg(long, default_value = "https://gw.mcpguard.online")]
+        gateway: String,
+        /// Print the sign-in link instead of opening a browser.
+        #[arg(long)]
+        no_browser: bool,
+    },
+    /// Sign out and revoke this computer's access.
+    Logout,
+    /// Download the workspace policy and upload local decisions (metadata only).
+    Sync,
+    /// Show whether this computer is connected to a workspace, and where files live.
+    Status {
+        /// Print only the policy file path `wrap` reads by default.
+        #[arg(long)]
+        policy_path: bool,
     },
 }
 
@@ -256,6 +277,14 @@ fn run(cli: Cli) -> Result<ExitCode> {
         Cmd::Uninstall => Ok(code(install::uninstall()?)),
         Cmd::Vault { cmd } => vault_cmd(cmd),
         Cmd::Hook { cmd: HookCmd::Prompt } => Ok(code(hook::prompt(&vault::Keychain::open())?)),
+        Cmd::Login { gateway, no_browser } => Ok(code(account::login(&gateway, !no_browser)?)),
+        Cmd::Logout => Ok(code(account::logout()?)),
+        Cmd::Sync => Ok(code(account::sync()?)),
+        Cmd::Status { policy_path: true } => {
+            println!("{}", account::policy_path().display());
+            Ok(ExitCode::SUCCESS)
+        }
+        Cmd::Status { policy_path: false } => Ok(code(account::status()?)),
     }
 }
 
