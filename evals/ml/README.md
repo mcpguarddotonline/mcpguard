@@ -32,6 +32,7 @@ Everything here runs on a laptop (we use an Apple M4, 16 GB) at no cost.
 | wikimedia/wikipedia (2,000 articles) | CC-BY-SA | benign prose |
 | Local crate READMEs, Rust source, man pages | various open source | benign file and shell output |
 | Synthetic tool outputs (`build_data.py`) | ours | attacks and benign |
+| Structured tool records (`build_records.py`): 10 record types as JSON/YAML, single or in lists | ours, long fields from fineweb-edu / Wikipedia above | benign records; attacks are the public attack rows above placed in one field (no new attack text) |
 
 Left out on purpose: Lakera/mosscap (many entries are ordinary chat with a
 password game, not injections, and it's the same game family as our Gandalf
@@ -53,6 +54,7 @@ goals or tool names.
 python -m venv mlenv && mlenv/bin/pip install torch transformers safetensors huggingface_hub pandas
 # downloads: see the commands at the top of build_data.py
 mlenv/bin/python evals/ml/build_data.py RAW OUT
+mlenv/bin/python evals/ml/build_records.py RAW OUT OUT_R3   # round 3: structured records
 mlenv/bin/python evals/ml/train.py BASE_MODEL OUT CKPT --seed 1
 mlenv/bin/python evals/ml/score.py CKPT scores.json evals/public/heldout/*.jsonl
 mlenv/bin/python evals/ml/metrics.py THRESHOLD ours=scores.json
