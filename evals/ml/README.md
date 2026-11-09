@@ -189,3 +189,43 @@ before it is scored on held-out.
 Next: harmless structured records in training (public text and records
 rendered as JSON and YAML lists, the way tools return them), then check
 dev_agent first.
+
+## Round 3 (November 2026): structured records — big gain, gate not met
+
+Data: round 2's training set plus 11,146 structured records from
+`build_records.py` (7,965 harmless, 3,181 with an attack text from the public
+training attacks in one field), and a held-back `records_dev.jsonl` (2,854
+rows, including record types and formats never seen in training). We checked
+it independently before training: dev files byte-identical to round 2, no
+held-out text overlapping new training rows (exact or 200-character match),
+no records_dev row in training. 15 records_dev attack rows share stock
+wording with training attacks, so its attack recall may be slightly high.
+
+Three runs (seeds 1-3) averaged. Threshold: 1% FPR over the benign rows of
+all four dev sets pooled (0.942 for the soup).
+
+| Dev set (soup, at 0.942) | False positives | Recall |
+| --- | ---: | ---: |
+| dev | 0.2% | 99.1% |
+| dev_ood | 0.1% | 93.6% |
+| records_dev | 0.0% | 98.5% |
+| dev_agent | 9.7% | 82.2% |
+
+| dev_agent | recall at 1% FPR | AUC | YAML-list false positives |
+| --- | ---: | ---: | ---: |
+| ProtectAI v2 | 0.5% | 0.68 | 32% (at 0.5) |
+| Round 1 | 0.0% | 0.83 | 89% (at 0.5) |
+| Round 2 soup | 20.6% | 0.87 | 83% (at 0.5) |
+| Round 3 soup | 39.9% | 0.93 | 6.8% (at 0.942) |
+
+The format shortcut is largely gone. What still trips the model on dev_agent
+is content: password-reset and security-code emails (some are AgentDojo's
+deliberate phishing-style decoys, labelled benign), ordinary
+person-to-person requests ("Please do the following by next week"), and
+short chat messages. The Slack suite is the worst (27% false positives).
+
+**Our gate for scoring held-out was dev_agent false positives at or below 2%
+and recall at 1% FPR at or above 50%. Round 3 misses both, so the held-out
+sets were not scored this round.** Next: harmless person-to-person requests
+and account notices inside records, and a second agent-shaped dev source so
+dev_agent's 576 benign rows aren't the only measure.
