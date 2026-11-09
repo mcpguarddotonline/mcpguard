@@ -108,13 +108,24 @@ for t in eval_texts:
             shingles.add(n[i : i + W])
 
 
-def overlaps_eval(t):
+# Round 3's records_dev, when DATA_DIR is round 3's output (round 4). Kept
+# apart: later rounds' training rows must avoid it, but it was built from the
+# same dev documents a later round's dev rows draw on.
+rd_texts = [r["text"] for r in jl(f"{DATA}/records_dev.jsonl")] if os.path.exists(f"{DATA}/records_dev.jsonl") else []
+rd_norm = {norm(t) for t in rd_texts}
+rd_shingles = {norm(t)[i : i + W] for t in rd_texts for i in range(0, max(1, len(norm(t)) - W + 1), STRIDE)
+               if len(norm(t)) >= W}
+
+
+def overlaps_eval(t, records_dev=False):
     """True if t shares a substring of >= W+STRIDE-1 normalised characters with
-    any eval text (or equals one)."""
+    any eval text (or equals one). records_dev=True also checks round 3's
+    records_dev."""
     n = norm(t)
-    if n in eval_norm:
+    if n in eval_norm or (records_dev and n in rd_norm):
         return True
-    return any(n[i : i + W] in shingles for i in range(0, len(n) - W + 1))
+    return any(n[i : i + W] in shingles or (records_dev and n[i : i + W] in rd_shingles)
+               for i in range(0, len(n) - W + 1))
 
 
 # ------------------------------------------------------------ benign text pools
@@ -701,17 +712,24 @@ SENT = "QZXSENTINELQZX"
 SEPS = ["\n\n", "\n", " ", "\n\n---\n", "\n\n"]
 
 
-def make_row(rtype, fmt, split, attack):
-    """attack: None for benign, else the attack text. Returns (row, meta)."""
+def make_row(rtype, fmt, split, attack, builder=None, mirror=None, count=None, modes=("append", "replace"),
+             source=None, shrink_fn=None):
+    """attack: None for benign, else the attack text. Returns (row, meta).
+
+    The keyword arguments are for later rounds (build_records4.py): builder
+    makes one (record, slots), mirror makes the second harmless text of a
+    benign "append" row, count draws the number of records, modes are the
+    ways the payload goes into the field ("prepend" puts it first)."""
+    builder, mirror, shrink_ = builder or TYPES[rtype], mirror or harmless, shrink_fn or shrink
     # Count and payload position are drawn once, so retries don't bias the
     # payload towards the first record.
-    n = 1 if rng.random() < 0.35 else rng.randrange(2, 6)
+    n = count() if count else (1 if rng.random() < 0.35 else rng.randrange(2, 6))
     target = rng.randrange(n)
     for _attempt in range(40):
         if _attempt and _attempt % 8 == 0 and target > 0:
             target -= 1  # only when the payload can't be reached at all
         SCHEMA.clear()
-        recs = [TYPES[rtype](split) for _ in range(n)]
+        recs = [builder(split) for _ in range(n)]
         records = [r for r, _ in recs]
         slot = rng.choice(recs[target][1])
         if n == 1:
@@ -726,7 +744,7 @@ def make_row(rtype, fmt, split, attack):
             shape, root, base = "list", records, ()
         path = base + ((target,) if n > 1 else ()) + slot
         orig = get(root, path)
-        mode = rng.choice(["append", "replace"])
+        mode = rng.choice(list(modes))
         sep = rng.choice(SEPS)
         if fmt == "json":
             st = {"ascii": rng.random() < 0.25, "indent": pick(None, None, 2, 2, 4),
@@ -741,28 +759,29 @@ def make_row(rtype, fmt, split, attack):
             if est_tokens(txt[: txt.index(SENT)]) <= TOKEN_BUDGET:
                 break
             if mode == "append" and len(orig) > 40:
-                orig = shrink(orig)
+                orig = shrink_(orig)
             for p in ([(base + ((i,) if n > 1 else ()) + s) for i in range(target + 1) for s in recs[i][1]]):
                 if p != path:
                     v = get(root, p)
                     if isinstance(v, str):
-                        put(root, p, shrink(v))
+                        put(root, p, shrink_(v))
         else:
             continue
         put(root, path, orig)
         fields = harmless_fields(root)  # the external benign text in this row
         if attack is not None:
             payload = clean(attack)
-            value = (orig + sep + payload) if mode == "append" else payload
+            value = {"append": orig + sep + payload, "prepend": payload + sep + orig}.get(mode, payload)
         else:
             # Mirror the attack rows' field lengths: half the time two
             # harmless texts joined the same way.
-            value = (orig + sep + harmless(split)) if mode == "append" else orig
+            value = {"append": lambda: orig + sep + mirror(split),
+                     "prepend": lambda: mirror(split) + sep + orig}.get(mode, lambda: orig)()
         put(root, path, value)
         if attack is None:
             fields = harmless_fields(root)
         text = render(root, fmt, st)
-        return ({"text": text, "label": "injection" if attack is not None else "benign", "source": f"records_{rtype}"},
+        return ({"text": text, "label": "injection" if attack is not None else "benign", "source": source or f"records_{rtype}"},
                 {"type": rtype, "format": fmt, "shape": shape, "split": split, "mode": mode, "n": n,
                  "target": target, "obj": root, "fields": fields, "value": value})
     raise RuntimeError(f"could not place payload for {rtype}/{fmt}")
@@ -784,130 +803,135 @@ def plan(n_rows):
     return out
 
 
-benign_plan, attack_plan = plan(N_BENIGN), plan(N_ATTACK)
-sched = {sp: attack_schedule(sp, sum(1 for *_, s in attack_plan if s == sp)) for sp in ("train", "dev")}
-rows, metas = [], []
-for t, f, sp in benign_plan:
-    r, m = make_row(t, f, sp, None)
-    m["attack_src"] = None
-    rows.append(r), metas.append(m)
-for t, f, sp in attack_plan:
-    if not sched[sp]:
-        continue
-    src, a = sched[sp].pop()
-    r, m = make_row(t, f, sp, a)
-    m["attack_src"], m["attack"] = src, a
-    rows.append(r), metas.append(m)
+def main():
+    benign_plan, attack_plan = plan(N_BENIGN), plan(N_ATTACK)
+    sched = {sp: attack_schedule(sp, sum(1 for *_, s in attack_plan if s == sp)) for sp in ("train", "dev")}
+    rows, metas = [], []
+    for t, f, sp in benign_plan:
+        r, m = make_row(t, f, sp, None)
+        m["attack_src"] = None
+        rows.append(r), metas.append(m)
+    for t, f, sp in attack_plan:
+        if not sched[sp]:
+            continue
+        src, a = sched[sp].pop()
+        r, m = make_row(t, f, sp, a)
+        m["attack_src"], m["attack"] = src, a
+        rows.append(r), metas.append(m)
 
-# ---------------------------------------------------------------------- checks
-errors = []
-try:
-    import yaml
+    # ---------------------------------------------------------------------- checks
+    errors = []
+    try:
+        import yaml
 
-    bad = 0
-    for r, m in zip(rows, metas):
-        if m["format"] == "yaml":
-            if yaml.safe_load(r["text"]) != m["obj"]:
+        bad = 0
+        for r, m in zip(rows, metas):
+            if m["format"] == "yaml":
+                if yaml.safe_load(r["text"]) != m["obj"]:
+                    bad += 1
+            elif json.loads(r["text"]) != m["obj"]:
                 bad += 1
-        elif json.loads(r["text"]) != m["obj"]:
-            bad += 1
-    if bad:
-        errors.append(f"{bad} rows do not parse back to their records")
-    print("parse-back check: all rows load as JSON/YAML and equal their records" if not bad else "")
-except ImportError:
-    print("pyyaml not installed: skipped the YAML parse-back check")
+        if bad:
+            errors.append(f"{bad} rows do not parse back to their records")
+        print("parse-back check: all rows load as JSON/YAML and equal their records" if not bad else "")
+    except ImportError:
+        print("pyyaml not installed: skipped the YAML parse-back check")
 
-# 1. Nothing from dev / dev_ood / dev_agent / held-out in the output.
-exact = [r for r in rows if norm(r["text"]) in eval_norm]
-if exact:
-    errors.append(f"{len(exact)} rows equal an eval text")
-field_leaks = sum(1 for m in metas for t in m["fields"] if overlaps_eval(t))
-if field_leaks:
-    errors.append(f"{field_leaks} harmless fields overlap an eval text (>= {W + STRIDE - 1} chars)")
-out_blob = "\n".join([norm(r["text"]) for r in rows] + [norm(m["value"]) for m in metas])
-sub_hits = 0
-for t in eval_texts:
-    k = norm(t)
-    if len(k) >= 200 and k[:200] in out_blob:
-        sub_hits += 1
-for m in metas:
-    for t in m["fields"] + [m["value"]] + ([clean(m["attack"])] if m["attack_src"] else []):
+    # 1. Nothing from dev / dev_ood / dev_agent / held-out in the output.
+    exact = [r for r in rows if norm(r["text"]) in eval_norm]
+    if exact:
+        errors.append(f"{len(exact)} rows equal an eval text")
+    field_leaks = sum(1 for m in metas for t in m["fields"] if overlaps_eval(t))
+    if field_leaks:
+        errors.append(f"{field_leaks} harmless fields overlap an eval text (>= {W + STRIDE - 1} chars)")
+    out_blob = "\n".join([norm(r["text"]) for r in rows] + [norm(m["value"]) for m in metas])
+    sub_hits = 0
+    for t in eval_texts:
         k = norm(t)
-        if len(k) >= 200 and k[:200] in eval_blob:
+        if len(k) >= 200 and k[:200] in out_blob:
             sub_hits += 1
-if sub_hits:
-    errors.append(f"{sub_hits} 200-character overlaps between output and eval texts")
+    for m in metas:
+        for t in m["fields"] + [m["value"]] + ([clean(m["attack"])] if m["attack_src"] else []):
+            k = norm(t)
+            if len(k) >= 200 and k[:200] in eval_blob:
+                sub_hits += 1
+    if sub_hits:
+        errors.append(f"{sub_hits} 200-character overlaps between output and eval texts")
 
-# 2. Every attack text is a train injection row, used only in its own split.
-used = collections.defaultdict(set)
-for m in metas:
-    if m["attack_src"]:
-        if m["attack"] not in train_inj or clean(m["attack"]) not in m["value"]:
-            errors.append("attack text not from train injection rows")
-            break
-        used[m["attack"]].add(m["split"])
-if any(len(v) > 1 for v in used.values()):
-    errors.append("an attack text is in both records_train and records_dev")
+    # 2. Every attack text is a train injection row, used only in its own split.
+    used = collections.defaultdict(set)
+    for m in metas:
+        if m["attack_src"]:
+            if m["attack"] not in train_inj or clean(m["attack"]) not in m["value"]:
+                errors.append("attack text not from train injection rows")
+                break
+            used[m["attack"]].add(m["split"])
+    if any(len(v) > 1 for v in used.values()):
+        errors.append("an attack text is in both records_train and records_dev")
 
-# 3. Counts.
-cnt = collections.Counter(r["label"] for r in rows)
-dev_share = sum(m["split"] == "dev" for m in metas) / len(metas)
-if not (0.95 * N_BENIGN <= cnt["benign"] <= 1.05 * N_BENIGN):
-    errors.append(f"benign count {cnt['benign']} out of range")
-if not (0.95 * N_ATTACK <= cnt["injection"] <= 1.05 * N_ATTACK):
-    errors.append(f"attack count {cnt['injection']} out of range")
-if not (0.17 <= dev_share <= 0.23):
-    errors.append(f"records_dev share {dev_share:.3f} out of range")
-src_share = collections.Counter(m["attack_src"] for m in metas if m["attack_src"])
-if max(src_share.values()) > 0.30 * cnt["injection"]:
-    errors.append(f"one attack source dominates: {src_share}")
-for sp in ("train", "dev"):
-    labs = {r["label"] for r, m in zip(rows, metas) if m["split"] == sp}
-    if labs != {"benign", "injection"}:
-        errors.append(f"{sp} split lacks a label")
-if any(m["split"] == "train" and (m["type"], m["format"]) in HELD_COMBOS for m in metas):
-    errors.append("held-out combo in train")
+    # 3. Counts.
+    cnt = collections.Counter(r["label"] for r in rows)
+    dev_share = sum(m["split"] == "dev" for m in metas) / len(metas)
+    if not (0.95 * N_BENIGN <= cnt["benign"] <= 1.05 * N_BENIGN):
+        errors.append(f"benign count {cnt['benign']} out of range")
+    if not (0.95 * N_ATTACK <= cnt["injection"] <= 1.05 * N_ATTACK):
+        errors.append(f"attack count {cnt['injection']} out of range")
+    if not (0.17 <= dev_share <= 0.23):
+        errors.append(f"records_dev share {dev_share:.3f} out of range")
+    src_share = collections.Counter(m["attack_src"] for m in metas if m["attack_src"])
+    if max(src_share.values()) > 0.30 * cnt["injection"]:
+        errors.append(f"one attack source dominates: {src_share}")
+    for sp in ("train", "dev"):
+        labs = {r["label"] for r, m in zip(rows, metas) if m["split"] == sp}
+        if labs != {"benign", "injection"}:
+            errors.append(f"{sp} split lacks a label")
+    if any(m["split"] == "train" and (m["type"], m["format"]) in HELD_COMBOS for m in metas):
+        errors.append("held-out combo in train")
 
-# ---------------------------------------------------------------------- report
-def table(title, key):
-    c = collections.Counter()
-    for r, m in zip(rows, metas):
-        c[(key(m), m["split"], r["label"])] += 1
-    print(f"\n{title:<22} {'train ben':>9} {'train inj':>9} {'dev ben':>8} {'dev inj':>8}")
-    for k in sorted({k[0] for k in c}, key=str):
-        print(f"{str(k):<22} {c[(k, 'train', 'benign')]:>9} {c[(k, 'train', 'injection')]:>9} "
-              f"{c[(k, 'dev', 'benign')]:>8} {c[(k, 'dev', 'injection')]:>8}")
+    # ---------------------------------------------------------------------- report
+    def table(title, key):
+        c = collections.Counter()
+        for r, m in zip(rows, metas):
+            c[(key(m), m["split"], r["label"])] += 1
+        print(f"\n{title:<22} {'train ben':>9} {'train inj':>9} {'dev ben':>8} {'dev inj':>8}")
+        for k in sorted({k[0] for k in c}, key=str):
+            print(f"{str(k):<22} {c[(k, 'train', 'benign')]:>9} {c[(k, 'train', 'injection')]:>9} "
+                  f"{c[(k, 'dev', 'benign')]:>8} {c[(k, 'dev', 'injection')]:>8}")
 
 
-table("type", lambda m: m["type"])
-table("format", lambda m: m["format"])
-table("type/format", lambda m: f"{m['type']}/{m['format']}")
-table("shape", lambda m: m["shape"])
-table("records in row", lambda m: m["n"])
-table("payload record", lambda m: "only" if m["n"] == 1 else ("first" if m["target"] == 0 else ("last" if m["target"] == m["n"] - 1 else "middle")))
-table("insert mode", lambda m: m["mode"])
-table("attack source", lambda m: m["attack_src"] or "-")
-lens = sorted(len(r["text"]) for r in rows)
-print(f"\nharmless texts drawn: {dict(LANG_DRAWN)} ({LANG_DRAWN['multi'] / sum(LANG_DRAWN.values()):.1%} multilingual Wikipedia)")
-print(f"rendered length: median {lens[len(lens) // 2]}, p90 {lens[int(len(lens) * 0.9)]}, max {lens[-1]}")
-print(f"records_dev share {dev_share:.3f} (held-out combos {p_held:.3f} of draws, row split {row_dev:.3f} of the rest)")
+    table("type", lambda m: m["type"])
+    table("format", lambda m: m["format"])
+    table("type/format", lambda m: f"{m['type']}/{m['format']}")
+    table("shape", lambda m: m["shape"])
+    table("records in row", lambda m: m["n"])
+    table("payload record", lambda m: "only" if m["n"] == 1 else ("first" if m["target"] == 0 else ("last" if m["target"] == m["n"] - 1 else "middle")))
+    table("insert mode", lambda m: m["mode"])
+    table("attack source", lambda m: m["attack_src"] or "-")
+    lens = sorted(len(r["text"]) for r in rows)
+    print(f"\nharmless texts drawn: {dict(LANG_DRAWN)} ({LANG_DRAWN['multi'] / sum(LANG_DRAWN.values()):.1%} multilingual Wikipedia)")
+    print(f"rendered length: median {lens[len(lens) // 2]}, p90 {lens[int(len(lens) * 0.9)]}, max {lens[-1]}")
+    print(f"records_dev share {dev_share:.3f} (held-out combos {p_held:.3f} of draws, row split {row_dev:.3f} of the rest)")
 
-if errors:
-    print("\nFAILED:\n  " + "\n  ".join(errors))
-    sys.exit(1)
+    if errors:
+        print("\nFAILED:\n  " + "\n  ".join(errors))
+        sys.exit(1)
 
-# ----------------------------------------------------------------------- write
-os.makedirs(OUT, exist_ok=True)
-new_train = [r for r, m in zip(rows, metas) if m["split"] == "train"]
-dev_rows = [r for r, m in zip(rows, metas) if m["split"] == "dev"]
-all_train = train_rows + new_train
-rng.shuffle(all_train)
-rng.shuffle(dev_rows)
-for name, rs in (("train", all_train), ("records_dev", dev_rows)):
-    with open(f"{OUT}/{name}.jsonl", "w") as f:
-        for r in rs:
-            f.write(json.dumps(r, ensure_ascii=False) + "\n")
-for s in ("dev", "dev_ood", "dev_agent"):
-    shutil.copy(f"{DATA}/{s}.jsonl", f"{OUT}/{s}.jsonl")
-print(f"\nwrote {OUT}/train.jsonl ({len(all_train)} rows, {len(new_train)} new) and "
-      f"{OUT}/records_dev.jsonl ({len(dev_rows)} rows); all checks passed")
+    # ----------------------------------------------------------------------- write
+    os.makedirs(OUT, exist_ok=True)
+    new_train = [r for r, m in zip(rows, metas) if m["split"] == "train"]
+    dev_rows = [r for r, m in zip(rows, metas) if m["split"] == "dev"]
+    all_train = train_rows + new_train
+    rng.shuffle(all_train)
+    rng.shuffle(dev_rows)
+    for name, rs in (("train", all_train), ("records_dev", dev_rows)):
+        with open(f"{OUT}/{name}.jsonl", "w") as f:
+            for r in rs:
+                f.write(json.dumps(r, ensure_ascii=False) + "\n")
+    for s in ("dev", "dev_ood", "dev_agent"):
+        shutil.copy(f"{DATA}/{s}.jsonl", f"{OUT}/{s}.jsonl")
+    print(f"\nwrote {OUT}/train.jsonl ({len(all_train)} rows, {len(new_train)} new) and "
+          f"{OUT}/records_dev.jsonl ({len(dev_rows)} rows); all checks passed")
+
+
+if __name__ == "__main__":
+    main()

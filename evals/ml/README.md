@@ -33,6 +33,7 @@ Everything here runs on a laptop (we use an Apple M4, 16 GB) at no cost.
 | Local crate READMEs, Rust source, man pages | various open source | benign file and shell output |
 | Synthetic tool outputs (`build_data.py`) | ours | attacks and benign |
 | Structured tool records (`build_records.py`): 10 record types as JSON/YAML, single or in lists | ours, long fields from fineweb-edu / Wikipedia above | benign records; attacks are the public attack rows above placed in one field (no new attack text) |
+| Instruction-like harmless content in records (`build_records4.py`): person-to-person requests, account notices, chat one-liners, how-to steps, marketing, about 10% non-English | ours (templates written for this round, made-up senders, .example links) | benign records; attacks are the public attack rows above, sometimes next to a harmless request in the same field |
 
 Left out on purpose: Lakera/mosscap (many entries are ordinary chat with a
 password game, not injections, and it's the same game family as our Gandalf
@@ -55,6 +56,7 @@ python -m venv mlenv && mlenv/bin/pip install torch transformers safetensors hug
 # downloads: see the commands at the top of build_data.py
 mlenv/bin/python evals/ml/build_data.py RAW OUT
 mlenv/bin/python evals/ml/build_records.py RAW OUT OUT_R3   # round 3: structured records
+mlenv/bin/python evals/ml/build_records4.py RAW OUT_R3 OUT_R4   # round 4: instruction-like harmless content
 mlenv/bin/python evals/ml/train.py BASE_MODEL OUT CKPT --seed 1
 mlenv/bin/python evals/ml/score.py CKPT scores.json evals/public/heldout/*.jsonl
 mlenv/bin/python evals/ml/metrics.py THRESHOLD ours=scores.json
