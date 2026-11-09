@@ -149,3 +149,41 @@ So round 1 stays our best model. What we take from it:
   weight-space edit, round 2). Every run is reported here, but repeated use
   wears out a held-out set, so future model choices must be made on dev
   alone and the held-out sets kept for a final check.
+
+## A dev set of real agent tool outputs (`build_dev_agent.py`)
+
+Built from AgentDojo (MIT, v0.1.35): its four suites' tool data (emails,
+files, calendar events, Slack messages, web pages, hotel and restaurant
+records, transactions), returned as single records or short lists, in JSON
+or YAML as tools return them. Benign rows use AgentDojo's harmless default
+text in every attacker slot; attack rows put AgentDojo's own attack
+templates and injection goals into one slot. We wrote no attack text.
+AgentDojo's "injecagent" template is excluded because it is copied from a
+held-out set. 974 rows: 576 benign, 398 attacks. Used for choosing models
+and thresholds only, never trained on.
+
+| Detector | recall at 1% FPR | at 2% | at 5% | AUC | FPR at 0.5 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| ProtectAI v2 | 0.5% | 4.3% | 13.6% | 0.68 | 37.2% |
+| Round 1 | 0.0% | 0.0% | 0.0% | 0.83 | 57.6% |
+| Round 1 + weight-space edit | 0.0% | 0.0% | 58.8% | 0.88 | 45.5% |
+| Round 2, seed 1 | 19.8% | 28.1% | 48.0% | 0.88 | 28.8% |
+| Round 2 soup | 20.6% | 24.6% | 42.2% | 0.87 | 45.0% |
+
+**No detector here is usable on this data.** Every one flags a large share
+of harmless tool output, and round 1 gives many harmless records a score of
+1.0, so no threshold separates them. Broken down by shape (round 1, false
+positives at 0.5): single JSON record 13%, JSON list 42%, single YAML record
+49%, YAML list 89%. AgentDojo's own tools return YAML, so this is the shape
+a real agent sees. It is the same shortcut the weight-space work found in
+round 1: machine-formatted output reads as "injection" because the training
+data has almost no harmless structured records.
+
+This set also ranks the models differently from held-out InjecAgent (round 2
+looks better here, worse there), so neither set alone is enough to choose a
+model. From now on a model has to improve on dev_agent and dev_ood together
+before it is scored on held-out.
+
+Next: harmless structured records in training (public text and records
+rendered as JSON and YAML lists, the way tools return them), then check
+dev_agent first.
