@@ -231,3 +231,58 @@ and recall at 1% FPR at or above 50%. Round 3 misses both, so the held-out
 sets were not scored this round.** Next: harmless person-to-person requests
 and account notices inside records, and a second agent-shaped dev source so
 dev_agent's 576 benign rows aren't the only measure.
+
+## Round 4 (November 2026): harmless text that reads like an instruction — recall gate met, false-positive gate missed
+
+Data: round 3's training set plus 6,801 rows from `build_records4.py`
+(4,797 harmless, 2,004 with an attack in one field): ordinary requests,
+account notices, chat, marketing and how-to text inside records, the shapes
+round 3 still flagged. Templates are split 75/25, and the held-back quarter
+forms a new dev set, `records4_dev.jsonl` (1,699 rows). Independent check
+before training: the four existing dev files are byte-identical to round 3;
+no exact overlap with any dev or held-out set; no 200-character overlap with
+held-out; four stray 200-character matches with dev sets, kept (none exact).
+
+Three runs averaged. The threshold is now 1% FPR over the benign rows of all
+**five** dev sets pooled. Round 3's soup is rescored on the same five sets so
+the comparison is like for like.
+
+| Dev set | Round 3 soup (thr 0.9989) | Round 4 soup (thr 0.9532) |
+| --- | ---: | ---: |
+| dev, FPR / recall | 0.0% / 89.9% | 0.1% / 99.3% |
+| dev_ood | 0.0% / 72.8% | 0.0% / 93.6% |
+| records_dev | 0.0% / 78.0% | 0.0% / 97.8% |
+| records4_dev | 5.9% / 66.5% | 4.6% / 95.8% |
+| dev_agent | 0.5% / 37.9% | 3.0% / 76.4% |
+| dev_agent recall at 1% FPR | 39.9% | **52.0%** |
+| dev_agent AUC | 0.932 | 0.926 |
+
+**Gate: dev_agent false positives 3.0% (needs at most 2%) and recall at 1%
+FPR 52.0% (needs at least 50%). The recall half passes for the first time;
+the false-positive half doesn't, so the held-out sets were not scored.**
+
+What is left, at the round 4 threshold:
+
+* dev_agent: 17 of 576 harmless rows. They come from a handful of AgentDojo
+  items repeated across list groupings: a Slack web-content dump that holds
+  to-do pages written as imperatives ("Find a channel ... and post there"),
+  a family-reunion email, a password-reset email and a security-code email.
+  Because the rows share items, 576 rows is far fewer independent samples
+  than it looks, and one item moves FPR by about a point.
+* records4_dev: person-to-person requests (38 of 279) and chat (17 of 134).
+  Notices, marketing and how-to text are now clean (0 of 790).
+
+Two measurement notes:
+
+* **Per-field scoring was worse.** `score_fields.py` scores each string
+  field of a JSON/YAML result separately and takes the maximum. On the round
+  3 soup it gave dev_agent recall at 1% FPR of 25.9% (vs 39.9% whole) and
+  AUC 0.881 (vs 0.932): the model was trained on whole records, and the
+  maximum over ~12 fields gives more chances for a false alarm. We keep
+  whole-text scoring; the script stays for a model trained on fields.
+* **Single runs saturate.** Each single seed scores some harmless rows at
+  exactly 1.0 in float32, more than 1% of the pool, so the per-seed
+  "recall at 1% FPR" is 0 and is not meaningful. The averaged model has no
+  such ties. Scoring logits instead of probabilities would fix this.
+
+`gate.py` applies the gate to any score file and refuses held-out scores.
